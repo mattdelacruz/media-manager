@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.jsoup.Jsoup;
@@ -12,6 +13,9 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
 public class MovieFinder {
+    public static final String IMDB_LINK = "https://www.imdb.com";
+    public static final String IMDB_SEARCH_LINK = "https://www.imdb" +
+            ".com/find?q=";
     public static final String TEST_PATH = "/top250.txt";
     public static final String TEST_REGEX = "\\d+\\s+\\d+\\s+\\d+\\.\\d+\\" +
             "s+(.+?)\\s+\\(\\d{4}\\)";
@@ -32,45 +36,34 @@ public class MovieFinder {
             "baseAlt']";
     public static final String IMDBRANK_QUERY = "[class='sc-5f7fb5b4-1 " +
             "bhuIgW']";
-    public static final String DIRECTORS_CONTAINER_QUERY = "[class='ipc-inline-list__item']";
-    public Document movieDoc;
-    public String linkedImgUrl, endLinkedImgUrl, poster, rating, year,
-            motionPictureRating, duration, IMDBRank;
-    public String[] directors, writers, stars;
-    public void findMovie(String movieName) {
-        String url = "https://www.imdb.com/find?q=" + movieName.replace(
-                " ", "+");
-        String title, description;
+    public static final String AFFILIATES_CONTAINER_QUERY = "[class='sc" +
+            "-acac9414-3 hKIseD']";
+    public static final String AFFILIATES_QUERY = "[class='ipc-metadata-list-item__content" +
+            "-container']";
+    public static final String AFFILIATES_LIST_QUERY = "[class='ipc" +
+            "-metadata-list-item__list-content-item " +
+            "ipc-metadata-list-item__list-content-item--link']";
 
+    
+    public Document movieDoc;
+    public String title, description, linkedImgUrl, endLinkedImgUrl, poster,
+            rating, year, motionPictureRating, duration, IMDBRank;
+    public ArrayList<String> directors, writers, stars;
+
+    public void findMovie(String movieName) {
+        String searchUrl = IMDB_SEARCH_LINK + movieName.replace(
+                " ", "+");
+        directors = new ArrayList<String>();
+        writers = new ArrayList<String>();
+        stars = new ArrayList<String>();
         try {
-            Document doc = Jsoup.connect(url).get();
+            Document doc = Jsoup.connect(searchUrl).get();
             Elements results = doc.select(RESULT_QUERY);
             if (!results.isEmpty()) {
-                Element firstResult = results.first();
-                Elements result = firstResult.select("a");
-                String moviePageUrl = "https://www.imdb.com" + result.attr(
-                        "href");
-
-                movieDoc = Jsoup.connect(moviePageUrl).get();
-                title = movieDoc.select(TITLE_QUERY).text();
-                description = movieDoc.select(SUMMARY_QUERY).text();
-                rating = movieDoc.select(RATING_QUERY).first().text();
-                findPoster();
+                connectToMoviePage(results);
                 findGeneralInfo();
-                IMDBRank = movieDoc.select(IMDBRANK_QUERY).first().text();
-                Elements directorsList =
-                        movieDoc.select(DIRECTORS_CONTAINER_QUERY).not(
-                                ":empty");
-                if (!directorsList.isEmpty()) {
-                    int i = 0;
-                    directors = new String[directorsList.size()];
-                    for (Element director : directorsList) {
-                        directors[i] =
-                                director.select("a[href*=/name/]").text();
-                        System.out.println("DIRECTOR " + directors[i]);
-                        i++;
-                    }
-                }
+                findPoster();
+                findAffiliatesList();
 
                 // creates a movie object, should be stored inside a list
                 Movie movie = new Movie(title, description, poster, year,
@@ -95,7 +88,7 @@ public class MovieFinder {
                 int count = 0;
 
                 String line;
-                while((line = reader.readLine()) != null &&
+                while ((line = reader.readLine()) != null &&
                         count < TEST_COUNT) {
                     Matcher matcher = titlePattern.matcher(line);
                     if (matcher.find()) {
@@ -115,18 +108,44 @@ public class MovieFinder {
 
                 throw e;
             }
-
-            if (inputStream != null) {
-                inputStream.close();
-            }
+            inputStream.close();
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
+    private void connectToMoviePage(Elements results) {
+        Element firstResult = results.first();
+        Elements result = firstResult.select("a");
+        String moviePageUrl = IMDB_LINK + result.attr(
+                "href");
 
-    //Poster on movie page is not large enough, need to query for the link that
-    // provides a
-    // larger poster
+        try {
+            movieDoc = Jsoup.connect(moviePageUrl).get();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+    private void findAffiliatesList() {
+        Elements affiliatesList =
+                movieDoc.select(AFFILIATES_CONTAINER_QUERY).select(
+                        AFFILIATES_QUERY);
+
+        if (!affiliatesList.isEmpty()) {
+            int i = 0;
+            for (Element affiliates : affiliatesList) {
+                Elements list =
+                        affiliates.select(AFFILIATES_LIST_QUERY);
+                for (Element l : list) {
+                    switch (i) {
+                        case 0 -> directors.add(l.text());
+                        case 1 -> writers.add(l.text());
+                        case 2 -> stars.add(l.text());
+                    }
+                }
+                i++;
+            }
+        }
+    }
     private void findPoster() {
         Elements imgElements = movieDoc.select(IMG_ELEMENTS_QUERY);
 
@@ -137,7 +156,7 @@ public class MovieFinder {
         }
 
         if (endLinkedImgUrl != "") {
-            linkedImgUrl = "https://www.imdb.com" + endLinkedImgUrl;
+            linkedImgUrl = IMDB_LINK + endLinkedImgUrl;
             try {
                 Document imgDoc = Jsoup.connect(linkedImgUrl).get();
                 poster = imgDoc.select(POSTER_QUERY).attr("src");
@@ -150,7 +169,10 @@ public class MovieFinder {
     }
     private void findGeneralInfo() {
         Elements generalInfo = movieDoc.select(GENERAL_INFO_QUERY);
-
+        title = movieDoc.select(TITLE_QUERY).text();
+        description = movieDoc.select(SUMMARY_QUERY).text();
+        rating = movieDoc.select(RATING_QUERY).first().text();
+        IMDBRank = movieDoc.select(IMDBRANK_QUERY).first().text();
         if (!generalInfo.isEmpty()) {
             for (Element info : generalInfo) {
                 String[] finalInfo = info.text().split("\\s+");
@@ -158,9 +180,6 @@ public class MovieFinder {
                 motionPictureRating = finalInfo[1];
                 duration =
                         finalInfo[2] + " " + finalInfo[3];
-                System.out.printf("year: %s motionPictureRating: %s " +
-                                "duration: %s\n", year, motionPictureRating,
-                        duration);
             }
         }
     }
